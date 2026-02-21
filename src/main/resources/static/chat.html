@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>AI Chat Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* --- GLOBAL RESET & MODERN SCROLLBARS --- */
+        html, body {
+            margin: 0; padding: 0; height: 100%; width: 100%;
+            background: #0b1220; color: #e6eef6;
+            font-family: 'Inter', sans-serif; overflow: hidden;
+        }
+
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+        * { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.1) transparent; }
+
+        .app { display: flex; height: 100vh; width: 100vw; overflow: hidden; }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            width: 260px; background: #081224; padding: 20px;
+            border-right: 1px solid rgba(255,255,255,0.05);
+            display: flex; flex-direction: column; flex-shrink: 0;
+        }
+
+        .chat-panel { flex: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; position: relative; }
+
+        .messages {
+            flex: 1; overflow-y: auto; padding: 40px 10%;
+            display: flex; flex-direction: column; gap: 32px;
+            scroll-behavior: smooth;
+        }
+
+        /* --- MESSAGE BUBBLES --- */
+        .msg-row { display: flex; width: 100%; }
+        .user-row { justify-content: flex-end; }
+        .user-row .llm-msg { background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.15); }
+        .user-row .msg-header { text-align: right; }
+
+        .ai-row { justify-content: flex-start; }
+        .ai-row .llm-msg { background: rgba(255, 255, 255, 0.03); }
+
+        .llm-msg {
+            max-width: 80%; padding: 18px; border-radius: 14px;
+            line-height: 1.6; font-size: 15px; color: #e1e7ef;
+        }
+        .msg-header { font-weight: 600; font-size: 13px; margin-bottom: 10px; display: block; color: #fff; }
+
+        .model-gemini { color: #a855f7 !important; text-transform: capitalize; }
+        .model-groq { color: #22d3ee !important; text-transform: capitalize; }
+
+        /* --- COMPOSER --- */
+        .composer {
+            display: flex; padding: 20px 10%; gap: 12px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            background: #0b1220; align-items: flex-end; flex-shrink: 0;
+        }
+
+        .input-area {
+            flex: 1; padding: 14px 18px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);
+            background: #111827; color: white; outline: none;
+            font-family: inherit; font-size: 15px; resize: none;
+            min-height: 24px; max-height: 180px; overflow-y: auto;
+        }
+
+        .btn {
+            display: flex; align-items: center; justify-content: center;
+            width: 48px; height: 48px; border: none; border-radius: 14px;
+            color: white; cursor: pointer; flex-shrink: 0; transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+
+        .send { background: linear-gradient(90deg, #10b981, #06b6d4); }
+        .cancel { background: #ef4444; }
+        .hidden { display: none; }
+
+        .new-chat-btn {
+            width: 100%; padding: 12px; background: linear-gradient(90deg, #10b981, #06b6d4);
+            color: white; font-size: 13px; font-weight: 600; margin-top: 15px;
+            border-radius: 10px; border: none; cursor: pointer;
+        }
+
+        .session-item {
+            cursor: pointer; padding: 10px; border-radius: 8px;
+            background: rgba(255,255,255,0.04); font-size: 13px;
+            transition: 0.2s; margin-bottom: 6px; border: 1px solid transparent;
+        }
+        .session-item:hover { background: rgba(255,255,255,0.08); }
+        .session-item.active { background: rgba(34,211,238,0.2); border-color: rgba(34,211,238,0.3); }
+
+        .sidebar-footer { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+
+        .clear-btn, .logout-btn {
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+            color: #94a3b8; padding: 10px; font-size: 13px; border-radius: 10px;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        .clear-btn:hover { background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: #ef4444; }
+
+        pre { background: #111827 !important; padding: 16px; border-radius: 12px; position: relative; margin: 12px 0; border: 1px solid rgba(255,255,255,0.1); }
+        .copy-btn { position: absolute; top: 10px; right: 10px; padding: 5px 10px; font-size: 11px; background: rgba(255, 255, 255, 0.08); border: none; color: #cbd5e1; cursor: pointer; border-radius: 6px; }
+    </style>
+</head>
+<body>
+
+<div class="app">
+    <div class="sidebar">
+        <h3 style="margin: 0 0 10px 0;">AI Chat Pro</h3>
+
+        <select id="providerSelect" class="input-area" style="height: 44px; flex-grow: 0; padding: 0 12px;">
+            <option value="groq">Groq</option>
+            <option value="gemini">Gemini</option>
+        </select>
+
+        <button class="new-chat-btn" onclick="createNewSession()">
+            <i data-lucide="plus" style="width:16px; vertical-align: middle;"></i> New Chat
+        </button>
+
+        <div style="margin-top:25px; flex: 1; overflow-y: auto;">
+            <h4 style="font-size:12px; color:#94a3b8; text-transform: uppercase; margin-bottom: 12px;">Conversations</h4>
+            <div id="sessionList"></div>
+        </div>
+
+        <div class="sidebar-footer">
+            <button class="clear-btn" onclick="document.getElementById('messages').innerHTML=''">Clear History</button>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="chat-panel">
+        <div id="messages" class="messages"></div>
+        <div class="composer">
+            <textarea id="prompt" class="input-area" placeholder="Type your message..." rows="1"></textarea>
+            <button id="sendBtn" class="btn send" onclick="startStream()"><i data-lucide="send-horizontal"></i></button>
+            <button id="cancelBtn" class="btn cancel hidden" onclick="cancelStream()"><i data-lucide="square"></i></button>
+        </div>
+    </div>
+</div>
+
+<script>
+    lucide.createIcons();
+
+    // --- AUTH ---
+    const token = localStorage.getItem("accessToken");
+    if (!token) window.location.href = "login.html";
+
+    let currentSessionId = null;
+    let abortController = null;
+    marked.setOptions({ breaks: true, gfm: true });
+
+    /* ================= AUTH HELPERS ================= */
+
+    function logout() {
+        localStorage.clear();
+        window.location.href = "login.html";
+    }
+
+    async function handleResponse(response) {
+        if (response.status === 401) {
+            logout();
+            return null;
+        }
+        return response;
+    }
+
+    /* ================= UI HELPERS ================= */
+
+    function renderMarkdown(el, text) {
+        el.innerHTML = marked.parse(text);
+        el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+        el.querySelectorAll('pre').forEach(pre => {
+            if (pre.querySelector('.copy-btn')) return;
+            const btn = document.createElement('button');
+            btn.className = 'copy-btn'; btn.innerText = 'Copy';
+            btn.onclick = () => {
+                navigator.clipboard.writeText(pre.querySelector('code').innerText);
+                btn.innerText = 'Copied!';
+                setTimeout(() => btn.innerText = 'Copy', 2000);
+            };
+            pre.appendChild(btn);
+        });
+    }
+
+    /* ================= SESSION API (WITH BEARER) ================= */
+
+    async function loadSessions() {
+        try {
+            const rawRes = await fetch(`/v1/api/loadSessions`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const res = await handleResponse(rawRes);
+            if (!res) return;
+
+            const sessions = await res.json();
+            const list = document.getElementById("sessionList");
+            list.innerHTML = "";
+
+            sessions.forEach((s, index) => {
+                const div = document.createElement("div");
+                div.className = `session-item ${currentSessionId === s.sessionId ? 'active' : ''}`;
+                div.innerText = "Conversation " + (index + 1);
+                div.onclick = () => {
+                    currentSessionId = s.sessionId;
+                    loadMessages(s.sessionId);
+                    document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
+                    div.classList.add('active');
+                };
+                list.appendChild(div);
+            });
+
+            if (!currentSessionId && sessions.length > 0) {
+                currentSessionId = sessions[0].sessionId;
+                loadMessages(currentSessionId);
+            }
+        } catch (err) { console.error(err); }
+    }
+
+    async function createNewSession() {
+        const rawRes = await fetch(`/v1/api/createSession`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+        const res = await handleResponse(rawRes);
+        if (!res) return;
+
+        const session = await res.json();
+        currentSessionId = session.sessionId;
+        document.getElementById("messages").innerHTML = "";
+        await loadSessions();
+    }
+
+    /* ================= MESSAGE API (FULL BEARER SUPPORT) ================= */
+
+    async function loadMessages(sessionId) {
+        try {
+            const rawRes = await fetch(`/v1/api/sessions/${sessionId}/messages`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const res = await handleResponse(rawRes);
+            if (!res) return;
+
+            const data = await res.json();
+            // Handle both wrapped and unwrapped JSON responses
+            const messages = Array.isArray(data) ? data : (data.body || []);
+
+            const container = document.getElementById("messages");
+            container.innerHTML = "";
+
+            messages.forEach(m => {
+                const row = document.createElement("div");
+                row.className = m.role === "user" ? "msg-row user-row" : "msg-row ai-row";
+                const header = m.role === "user" ? "You" : "AI";
+                const color = m.role === "assistant" ? "model-gemini" : "";
+
+                row.innerHTML = `
+                    <div class="llm-msg">
+                        <span class="msg-header ${color}">${header}</span>
+                        <div class="content"></div>
+                    </div>`;
+
+                container.appendChild(row);
+                const contentEl = row.querySelector(".content");
+                if (m.role === "assistant") renderMarkdown(contentEl, m.content);
+                else contentEl.innerText = m.content;
+            });
+            container.scrollTop = container.scrollHeight;
+        } catch (err) { console.error(err); }
+    }
+
+    /* ================= STREAMING API (WITH BEARER) ================= */
+
+    async function startStream() {
+        const promptEl = document.getElementById("prompt");
+        const msg = promptEl.value.trim();
+        if (!msg) return;
+
+        const provider = document.getElementById("providerSelect").value;
+        const container = document.getElementById("messages");
+
+        container.innerHTML += `<div class="msg-row user-row"><div class="llm-msg"><span class="msg-header">You</span><div>${msg}</div></div></div>`;
+
+        const modelClass = provider === 'gemini' ? 'model-gemini' : 'model-groq';
+        const botRow = document.createElement("div");
+        botRow.className = "msg-row ai-row";
+        botRow.innerHTML = `<div class="llm-msg"><span class="msg-header ${modelClass}">${provider}</span><div class="content">...</div></div>`;
+        container.appendChild(botRow);
+        const bubble = botRow.querySelector(".content");
+
+        promptEl.value = "";
+        promptEl.style.height = "auto";
+        container.scrollTop = container.scrollHeight;
+
+        document.getElementById('sendBtn').classList.add('hidden');
+        document.getElementById('cancelBtn').classList.remove('hidden');
+
+        abortController = new AbortController();
+        let streamBuffer = "";
+
+        try {
+            const rawRes = await fetch(
+                `/v1/api/stream?sessionId=${currentSessionId ?? ""}&provider=${provider}&message=${encodeURIComponent(msg)}`,
+                { headers: { "Authorization": `Bearer ${token}` }, signal: abortController.signal }
+            );
+
+            const response = await handleResponse(rawRes);
+            if (!response) return;
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            bubble.innerHTML = "";
+
+            while (true) {
+                try {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split("\n");
+
+                    lines.forEach(line => {
+                        if (line.startsWith("data:")) {
+                            try {
+                                const json = JSON.parse(line.replace("data:", ""));
+                                if (json.done) return;
+                                streamBuffer += json.content;
+                                renderMarkdown(bubble, streamBuffer);
+                                container.scrollTop = container.scrollHeight;
+                            } catch (e) {}
+                        }
+                    });
+                } catch (readError) {
+                    // SILENT GUARD: If the AI already finished, ignore the final read crash
+                    if (streamBuffer.length > 0) break;
+                    throw readError;
+                }
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') bubble.innerHTML += " <br><i>[Stopped]</i>";
+            else bubble.innerHTML = "⚠️ Connection error or unauthorized.";
+        } finally {
+            cleanup();
+        }
+    }
+
+    function cancelStream() { if (abortController) abortController.abort(); }
+
+    function cleanup() {
+        document.getElementById('sendBtn').classList.remove('hidden');
+        document.getElementById('cancelBtn').classList.add('hidden');
+        abortController = null;
+        loadSessions();
+    }
+
+    /* ================= INIT ================= */
+    const promptArea = document.getElementById('prompt');
+    promptArea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 180) + 'px';
+    });
+
+    promptArea.onkeydown = (e) => {
+        if(e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            startStream();
+        }
+    };
+
+    window.onload = loadSessions;
+</script>
+</body>
+</html>

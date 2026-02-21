@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <title>Register - AI Chat Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* --- MATCHING CHAT UI THEME --- */
+        body {
+            background: #0b1220;
+            color: #e6eef6;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background: #111827;
+            padding: 40px;
+            border-radius: 16px;
+            width: 350px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        h2 {
+            margin-top: 0;
+            font-weight: 600;
+            text-align: center;
+            background: linear-gradient(90deg, #10b981, #06b6d4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            color: #94a3b8;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            box-sizing: border-box;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: #081224;
+            color: white;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: #06b6d4;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #10b981, #06b6d4);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s;
+            margin-top: 10px;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .footer {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 13px;
+            color: #94a3b8;
+        }
+
+        .footer a {
+            color: #06b6d4;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Create Account</h2>
+
+    <div class="input-group">
+        <label for="mail">Email Address</label>
+        <input id="mail" type="email" placeholder="name@example.com"/>
+    </div>
+
+    <div class="input-group">
+        <label for="username">Username</label>
+        <input id="username" type="text" placeholder="johndoe"/>
+    </div>
+
+    <div class="input-group">
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="••••••••"/>
+    </div>
+
+    <button id="regBtn" onclick="register()">Register</button>
+
+    <div class="footer">
+        Already have an account? <a href="login.html">Login</a>
+    </div>
+</div>
+
+<script>
+    async function register() {
+        const mail = document.getElementById("mail").value;
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+        const btn = document.getElementById("regBtn");
+
+        if (!mail || !username || !password) {
+            alert("Please fill in all fields.");
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = "Registering...";
+
+        try {
+            const response = await fetch("http://localhost:8081/auth/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mail, username, password })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                alert("Registration failed: " + (errorData.message || "Unknown error"));
+                return;
+            }
+
+            alert("Registration successful! Redirecting to login...");
+            window.location.href = "login.html";
+        } catch (err) {
+            alert("Connection error. Is your Auth Service running?");
+        } finally {
+            btn.disabled = false;
+            btn.innerText = "Register";
+        }
+    }
+</script>
+
+</body>
+</html>

@@ -121,5 +121,10 @@ public class SessionHistory {
             return deque;
         });
     }
+
+    public static void removeHistory(String userId, Long sessionId) {
+        String key = key(userId, sessionId);
+        STORE.remove(key);
+    }
 }
 

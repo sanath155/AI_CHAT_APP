@@ -12,5 +12,7 @@ public interface ChatService {
 
     ResponseEntity<?> getMessages(Long sessionId, String userId);
 
-    ResponseEntity<?> createNewSession(String userId);
+    ResponseEntity<?> createNewSession(String userId, String userName);
+
+    ResponseEntity<?> deleteSession(String userId, Long sessionId);
 }

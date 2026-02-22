@@ -2,21 +2,27 @@ package com.ai.chat.client;
 
 import com.ai.chat.cache.SessionHistory;
 import com.ai.chat.config.GeminiProperties;
+import com.ai.chat.constants.ApplicationConstants;
+import com.ai.chat.dto.GeminiGenerationConfigDto;
+import com.ai.chat.dto.GeminiRequestDto;
 import com.ai.chat.dto.UserContext;
 import com.ai.chat.entities.ChatMessage;
 import com.ai.chat.entities.ChatSession;
+import com.ai.chat.records.GeminiMessagesRecord;
+import com.ai.chat.records.GeminiPartsRecord;
+import com.ai.chat.records.GeminiTextRecord;
 import com.ai.chat.repositories.ChatMessageRepository;
-import io.netty.channel.ChannelOption;
+import com.ai.chat.repositories.ChatSessionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
-import reactor.netty.http.client.HttpClient;
+import reactor.util.retry.Retry;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -30,73 +36,19 @@ import java.util.Map;
 public class GeminiClient implements LLMClient {
 
     private final WebClient webClient;
-    private final String model;
-    private final String apiKey;
-
-    private static final String systemPrompt = """
-            You are an expert technical assistant.
-            
-            Always respond using clean, well-structured Markdown formatting.
-            Do not break words.
-            
-            
-            Formatting rules:
-            - Use proper headings (## for sections, ### for subsections).
-            - Add a blank line after headings.
-            - Use bullet points or numbered lists when appropriate.
-            - Keep proper spacing between words.
-            - Never merge words together.
-            - Do not break words across lines.
-            - Use short paragraphs for readability.
-            
-            Engagement rules:
-            - Make responses engaging and easy to read.
-            - Use relevant emojis occasionally (not excessively).
-            - Use clear explanations with examples where helpful.
-            - Highlight important keywords using **bold** formatting.
-            
-            Code rules:
-            - Always wrap code inside proper fenced blocks using triple backticks.
-            - Specify the language in code blocks (e.g., ```java).
-            - Keep code clean and properly formatted.
-            
-            Tone:
-            - Friendly, professional, and confident.
-            - Avoid overly robotic language.
-            - Explain concepts clearly as if teaching a developer with 2–4 years of experience.
-            """;
+    private final GeminiProperties geminiProperties;
 
     @Autowired
     ChatMessageRepository chatMessageRepository;
 
+    @Autowired
+    ChatSessionRepository chatSessionRepository;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public GeminiClient(GeminiProperties props) {
-
-        this.model = props.getModel();
-        this.apiKey = props.getApiKey();
-
-        HttpClient httpClient = HttpClient.create()
-                .responseTimeout(Duration.ofSeconds(120))
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000);
-
-        this.webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .baseUrl(props.getBaseUrl())
-                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .build();
-    }
-
-
-    @Override
-    public Mono<String> generate(String prompt) {
-
-        return webClient.post()
-                .uri("/{model}:generateContent", model)
-                .bodyValue(buildRequest(null, null))
-                .retrieve()
-                .bodyToMono(Map.class)
-                .map(this::extractText);
+    public GeminiClient(GeminiProperties geminiProperties, WebClient webClient) {
+        this.geminiProperties = geminiProperties;
+        this.webClient = webClient;
     }
 
 
@@ -106,28 +58,28 @@ public class GeminiClient implements LLMClient {
         String user = userContext.getUserId();
         Long sessionId = chatSession.getSessionId();
         SessionHistory.addMessage(user, sessionId, "user", prompt);
-
-        ChatMessage chatMessage = ChatMessage.builder().
-                role("user")
-                .content(prompt)
-                .session(chatSession).build();
-        Mono.fromCallable(() -> chatMessageRepository.save(chatMessage))
-                .subscribeOn(Schedulers.boundedElastic())
-                .subscribe();
-
         StringBuilder aiBuffer = new StringBuilder();
 
+        String url = UriComponentsBuilder.fromUriString(geminiProperties.getBaseUrl())
+                .pathSegment(geminiProperties.getModel(), ":generateContent")
+                .queryParam("alt", "sse")
+                .toUriString();
+
         return webClient.post()
-                .uri(uriBuilder -> uriBuilder
-                        .path("/{model}:generateContent")
-                        .queryParam("alt", "sse")
-                        .queryParam("key", apiKey)
-                        .build(model)
-                )
+                .uri(url)
+                .headers(httpHeaders -> {
+                    httpHeaders.setContentType(MediaType.APPLICATION_JSON);
+                    httpHeaders.setAccept(List.of(MediaType.TEXT_EVENT_STREAM));
+                    httpHeaders.set("x-goog-api-key", geminiProperties.getApiKey());
+                })
                 .bodyValue(buildRequest(SessionHistory.getHistory(user, sessionId), userContext.getUserName()))
                 .retrieve()
                 .bodyToFlux(String.class)
-                .flatMap(chunk -> { // Use flatMap to break chunks into words
+                .checkpoint("AI_STREAM_START")
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(2))
+                        .filter(throwable -> throwable instanceof WebClientRequestException))
+                .doOnError(e -> System.err.println("Stream failed after retries: " + e.getMessage()))
+                .flatMap(chunk -> {
                     if (chunk.contains("[DONE]")) return Flux.just("{\"done\":true}");
                     try {
                         int start = chunk.indexOf("{");
@@ -142,8 +94,6 @@ public class GeminiClient implements LLMClient {
 
                         aiBuffer.append(content);
 
-                        // Split by "space" but keep the space using lookbehind regex
-                        // This ensures the typing effect happens word-by-word
                         String[] words = content.split("(?<= )");
 
                         return Flux.fromArray(words).map(word -> {
@@ -155,11 +105,15 @@ public class GeminiClient implements LLMClient {
                         return Flux.empty();
                     }
                 })
-                // Now the delay applies to every individual word
-                .delayElements(Duration.ofMillis(50))
-                .doOnComplete(() -> {
-
+                .delayElements(Duration.ofMillis(30))
+                .doFinally(signalType -> {
                     SessionHistory.addMessage(user, sessionId, "assistant", aiBuffer.toString());
+
+                    ChatMessage userPrompt = ChatMessage.builder().
+                            role("user")
+                            .content(prompt)
+                            .session(chatSession)
+                            .build();
 
                     ChatMessage aiMsg = ChatMessage.builder()
                             .role("assistant")
@@ -167,11 +121,47 @@ public class GeminiClient implements LLMClient {
                             .session(chatSession)
                             .build();
 
-                    Mono.fromCallable(() -> chatMessageRepository.save(aiMsg))
+                    Mono.fromCallable(() -> chatMessageRepository.saveAll(List.of(userPrompt, aiMsg)))
                             .subscribeOn(Schedulers.boundedElastic())
                             .subscribe();
+
+                    if (chatSession.getTitle() == null || chatSession.getTitle().isBlank()) {
+                        generateTitle(prompt, chatSession);
+                    }
                 });
 
+    }
+
+    @Override
+    public void generateTitle(String prompt, ChatSession session) {
+        String summarizationPrompt = "Generate a concise 3-word title for: '" + prompt + "'";
+
+        String url = UriComponentsBuilder.fromUriString(geminiProperties.getBaseUrl())
+                .pathSegment(geminiProperties.getModel(), ":generateContent")
+                .toUriString();
+
+        webClient.post()
+                .uri(url)
+                .headers(httpHeaders -> {
+                    httpHeaders.setContentType(MediaType.APPLICATION_JSON);
+                    httpHeaders.set("x-goog-api-key", geminiProperties.getApiKey());
+                })
+                .bodyValue(buildTitleRequest(summarizationPrompt))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(this::extractText)
+                .map(title -> title.replaceAll("\"", "").trim())
+                .flatMap(cleanTitle -> {
+                    String safeTitle = cleanTitle.length() > 60
+                            ? cleanTitle.substring(0, 60) + "..."
+                            : cleanTitle;
+                    session.setTitle(safeTitle);
+                    return Mono.fromCallable(() -> chatSessionRepository.save(session))
+                            .subscribeOn(Schedulers.boundedElastic());
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .doOnError(e -> System.err.println("Title generation failed: " + e.getMessage()))
+                .subscribe();
     }
 
     @Override
@@ -179,31 +169,70 @@ public class GeminiClient implements LLMClient {
         return "gemini";
     }
 
-    private Map<String, Object> buildRequest(Deque<ObjectNode> history, String username) {
+    private GeminiRequestDto buildRequest(Deque<ObjectNode> history, String username) {
 
-        String userSystem = systemPrompt + String.format(" - User name is %s", username);
-        // Convert rest to Gemini format
-        List<Map<String, Object>> contents = history.stream()
-                .map(msg -> Map.of(
-                        "role", msg.get("role").asString().equals("assistant") ? "model" : "user",
-                        "parts", List.of(
-                                Map.of("text", msg.get("content").asString())
-                        )
-                ))
-                .toList();
+        String userSystem = ApplicationConstants.SYSTEM_PROMPT + String.format(" - User name is %s", username);
 
-        return Map.of(
-                "systemInstruction", Map.of(
-                        "parts", List.of(
-                                Map.of("text", userSystem)
-                        )
-                ),
-                "contents", contents
-        );
+        List<GeminiMessagesRecord> geminiMessagesRecords = history
+                .stream()
+                .map(msg -> {
+                    // Safely extract the exact text without Jackson adding extra quotes
+                    String originalRole = msg.path("role").asString("user");
+                    String content = msg.path("content").asString("");
+
+                    // Map to Gemini's strict roles
+                    String geminiRole = originalRole.equals("assistant") ? "model" : "user";
+
+                    return GeminiMessagesRecord.builder()
+                            .role(geminiRole)
+                            .parts(List.of(
+                                    GeminiTextRecord.builder()
+                                            .text(content)
+                                            .build()
+                            )).build();
+                }).toList();
+
+        return GeminiRequestDto.builder()
+                .systemInstruction(GeminiPartsRecord.builder()
+                        .parts(List.of(GeminiTextRecord.builder()
+                                .text(userSystem).build())
+                        ).build())
+                .contents(geminiMessagesRecords)
+                .build();
     }
 
+    private GeminiRequestDto buildTitleRequest(String prompt) {
+
+        String instruction = "Summarize this into a 3-word title: " + prompt +
+                " Plain text ONLY.  Strictly NO markdown, NO bolding, NO quotes, and NO periods.";
+
+        return GeminiRequestDto.builder()
+                .contents(
+                        List.of(GeminiMessagesRecord.builder()
+                                .role("user")
+                                .parts(
+                                        List.of(GeminiTextRecord.builder()
+                                                .text(instruction)
+                                                .build()))
+                                .build()))
+                .generationConfig(
+                        GeminiGenerationConfigDto.builder()
+                                .maxOutputTokens(20)
+                                .temperature(1.0)
+                                .build()
+                ).build();
+    }
 
     private String extractText(Map response) {
-        return response.toString();
+        try {
+            List candidates = (List) response.get("candidates");
+            Map firstCandidate = (Map) candidates.get(0);
+            Map content = (Map) firstCandidate.get("content");
+            List parts = (List) content.get("parts");
+            Map firstPart = (Map) parts.get(0);
+            return (String) firstPart.get("text");
+        } catch (Exception e) {
+            return "Untitled Conversation";
+        }
     }
 }

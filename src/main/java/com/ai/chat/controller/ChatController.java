@@ -22,6 +22,10 @@ public class ChatController {
     public Flux<String> stream(@RequestParam String provider,
                                @RequestParam String message,
                                @RequestParam(required = false) Long sessionId) {
+
+
+       /* return SecurityUtils.getAuthenticatedUser()
+                .flatMapMany(user -> chatService.streamChat(provider, message, user, sessionId));*/
         return Flux.deferContextual(ctx -> {
             UserContext user = ctx.get("USER_DATA");
             return chatService.streamChat(provider, message, user, sessionId);
@@ -32,7 +36,7 @@ public class ChatController {
     public Mono<ResponseEntity<?>> createSession() {
         return Mono.deferContextual(ctx -> {
             UserContext user = ctx.get("USER_DATA");
-            return Mono.fromCallable(() -> chatService.createNewSession(user.getUserId()))
+            return Mono.fromCallable(() -> chatService.createNewSession(user.getUserId(), user.getUserName()))
                     .subscribeOn(Schedulers.boundedElastic());
         });
     }
@@ -61,6 +65,15 @@ public class ChatController {
             // 2. Proceed with the blocking call on the correct scheduler
             return Mono.fromCallable(() -> chatService.getMessages(sessionId, user.getUserId()))
                     .map(ResponseEntity::ok)
+                    .subscribeOn(Schedulers.boundedElastic());
+        });
+    }
+
+    @DeleteMapping("/sessions/{sessionId}/deleteSession")
+    public Mono<ResponseEntity<?>> deleteSession(@PathVariable Long sessionId) {
+        return Mono.deferContextual(ctx -> {
+            UserContext user = ctx.get("USER_DATA");
+            return Mono.fromCallable(() -> chatService.deleteSession(user.getUserId(), sessionId))
                     .subscribeOn(Schedulers.boundedElastic());
         });
     }

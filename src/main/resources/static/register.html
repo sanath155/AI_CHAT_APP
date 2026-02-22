@@ -2,125 +2,147 @@
 <html lang="en">
 <head>
     <meta charset="utf-8"/>
-    <title>Register - AI Chat Pro</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prism Elite | Create Account</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        /* --- MATCHING CHAT UI THEME --- */
+        :root {
+            --bg-deep: #0B0E14;
+            --accent: #2563EB;
+            --text-high: #F3F4F6;
+            --text-muted: #9CA3AF;
+            --border: rgba(255, 255, 255, 0.08);
+            --card-bg: rgba(17, 21, 28, 0.65);
+        }
+
         body {
-            background: #0b1220;
-            color: #e6eef6;
-            font-family: 'Inter', sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
+            background: var(--bg-deep); color: var(--text-high);
+            font-family: 'Outfit', sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; margin: 0;
+            -webkit-font-smoothing: antialiased;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Subtle glowing orb */
+        body::before {
+            content: ''; position: absolute; width: 500px; height: 500px;
+            background: radial-gradient(circle, rgba(147, 51, 234, 0.12) 0%, transparent 60%);
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 0; pointer-events: none;
         }
 
         .card {
-            background: #111827;
+            background: var(--card-bg);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
             padding: 40px;
-            border-radius: 16px;
-            width: 350px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 28px;
+            width: 380px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            animation: cardFade 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative; z-index: 1;
         }
+
+        @keyframes cardFade { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Premium 3D Logo */
+        .logo-icon {
+            width: 48px; height: 48px;
+            background: linear-gradient(135deg, #3B82F6 0%, #7C3AED 50%, #DB2777 100%);
+            border-radius: 14px; display: flex; align-items: center; justify-content: center; color: white;
+            margin: 0 auto 16px;
+            box-shadow: 0 6px 20px rgba(124, 58, 237, 0.3), inset 0 2px 4px rgba(255, 255, 255, 0.4), inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            position: relative; overflow: hidden;
+        }
+        .logo-icon i { width: 24px; height: 24px; }
+        .logo-icon::after {
+            content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
+            background: linear-gradient(to right, transparent, rgba(255,255,255,0.5), transparent);
+            transform: skewX(-20deg); animation: shine 3.5s infinite;
+        }
+        @keyframes shine { 0% { left: -100%; } 20%, 100% { left: 200%; } }
 
         h2 {
-            margin-top: 0;
-            font-weight: 600;
-            text-align: center;
-            background: linear-gradient(90deg, #10b981, #06b6d4);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            margin: 0 0 28px 0; font-weight: 800; text-align: center;
+            color: #fff; letter-spacing: -0.5px; font-size: 22px;
         }
 
-        .input-group {
-            margin-bottom: 15px;
-        }
+        .input-group { margin-bottom: 18px; }
+        label { display: block; font-size: 13px; font-weight: 500; color: var(--text-muted); margin-bottom: 8px; margin-left: 4px; }
 
-        label {
-            display: block;
-            font-size: 13px;
-            color: #94a3b8;
-            margin-bottom: 5px;
-        }
+        .input-wrapper { position: relative; display: flex; align-items: center; }
+        .input-wrapper i { position: absolute; left: 16px; color: #6B7280; width: 18px; transition: 0.2s; }
 
         input {
-            width: 100%;
-            padding: 12px;
-            box-sizing: border-box;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            background: #081224;
-            color: white;
-            outline: none;
-            transition: border-color 0.2s;
+            width: 100%; padding: 14px 16px 14px 44px;
+            background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 14px; color: white; outline: none; font-size: 15px;
+            font-family: inherit; transition: all 0.3s ease; box-sizing: border-box;
         }
-
-        input:focus {
-            border-color: #06b6d4;
-        }
+        input::placeholder { color: #4B5563; }
+        input:focus { border-color: rgba(37, 99, 235, 0.5); background: rgba(0, 0, 0, 0.3); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+        input:focus + i, .input-wrapper:focus-within i { color: var(--accent); }
 
         button {
-            width: 100%;
-            padding: 12px;
-            border: none;
-            border-radius: 8px;
-            background: linear-gradient(90deg, #10b981, #06b6d4);
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.1s;
-            margin-top: 10px;
+            width: 100%; padding: 14px; border: none; border-radius: 14px;
+            background: var(--text-high); color: var(--bg-deep); font-size: 15px;
+            font-weight: 700; cursor: pointer; transition: all 0.2s;
+            margin-top: 10px; box-shadow: 0 4px 12px rgba(255,255,255,0.1);
         }
+        button:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(255,255,255,0.15); }
+        button:active { transform: scale(0.98); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
-        button:active {
-            transform: scale(0.98);
-        }
-
-        .footer {
-            margin-top: 20px;
-            text-align: center;
-            font-size: 13px;
-            color: #94a3b8;
-        }
-
-        .footer a {
-            color: #06b6d4;
-            text-decoration: none;
-        }
+        .footer { margin-top: 24px; text-align: center; font-size: 14.5px; color: var(--text-muted); }
+        .footer a { color: var(--accent); text-decoration: none; font-weight: 600; transition: 0.2s; }
+        .footer a:hover { color: #60A5FA; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>Create Account</h2>
+    <div class="logo-icon"><i data-lucide="hexagon" fill="white"></i></div>
+    <h2>Create Elite ID</h2>
 
     <div class="input-group">
-        <label for="mail">Email Address</label>
-        <input id="mail" type="email" placeholder="name@example.com"/>
+        <label>Email Address</label>
+        <div class="input-wrapper">
+            <i data-lucide="mail"></i>
+            <input id="mail" type="email" placeholder="name@company.com"/>
+        </div>
     </div>
 
     <div class="input-group">
-        <label for="username">Username</label>
-        <input id="username" type="text" placeholder="johndoe"/>
+        <label>Username</label>
+        <div class="input-wrapper">
+            <i data-lucide="user"></i>
+            <input id="username" type="text" placeholder="elite_user_01"/>
+        </div>
     </div>
 
     <div class="input-group">
-        <label for="password">Password</label>
-        <input id="password" type="password" placeholder="••••••••"/>
+        <label>Password</label>
+        <div class="input-wrapper">
+            <i data-lucide="lock"></i>
+            <input id="password" type="password" placeholder="••••••••"/>
+        </div>
     </div>
 
-    <button id="regBtn" onclick="register()">Register</button>
+    <button id="regBtn" onclick="register()">Register Account</button>
 
     <div class="footer">
-        Already have an account? <a href="login.html">Login</a>
+        Member of Elite? <a href="login.html">Sign In</a>
     </div>
 </div>
 
 <script>
+    lucide.createIcons();
+
     async function register() {
         const mail = document.getElementById("mail").value;
         const username = document.getElementById("username").value;
@@ -128,12 +150,12 @@
         const btn = document.getElementById("regBtn");
 
         if (!mail || !username || !password) {
-            alert("Please fill in all fields.");
+            alert("All fields are mandatory.");
             return;
         }
 
         btn.disabled = true;
-        btn.innerText = "Registering...";
+        btn.innerText = "Provisioning Account...";
 
         try {
             const response = await fetch("http://localhost:8081/auth/register", {
@@ -144,20 +166,23 @@
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                alert("Registration failed: " + (errorData.message || "Unknown error"));
+                alert("Elite Provisioning Failed: " + (errorData.message || "Unknown error"));
                 return;
             }
 
-            alert("Registration successful! Redirecting to login...");
+            alert("Registration complete! Welcome to the Elite.");
             window.location.href = "login.html";
         } catch (err) {
-            alert("Connection error. Is your Auth Service running?");
+            alert("Communication error with Auth Server.");
         } finally {
             btn.disabled = false;
-            btn.innerText = "Register";
+            btn.innerText = "Register Account";
         }
     }
-</script>
 
+    document.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') register();
+    });
+</script>
 </body>
 </html>

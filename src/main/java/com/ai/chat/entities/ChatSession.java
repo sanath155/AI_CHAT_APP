@@ -30,6 +30,9 @@ public class ChatSession {
     @Column(name = "user_name")
     private String userName;
 
+    @Column(name = "title")
+    private String title;
+
     @CreationTimestamp
     @JsonFormat(pattern = "dd-MM-yyyy HH:mm:ss", timezone = "IST")
     @Column(name = "created_date")

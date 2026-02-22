@@ -14,13 +14,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+
+import static reactor.netty.http.HttpConnectionLiveness.log;
 
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -64,11 +65,11 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public ResponseEntity<?> createNewSession(String userId) {
+    public ResponseEntity<?> createNewSession(String userId,String userName) {
         ChatSession session = chatSessionRepository.save(
                 ChatSession.builder()
                         .userId(userId)
-                        .userName("Shiva")
+                        .userName(userName)
                         .build()
         );
 
@@ -78,13 +79,25 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
+    public ResponseEntity<?> deleteSession(String userId, Long sessionId) {
+        Optional<ChatSession> session = chatSessionRepository.findTopByUserIdAndSessionId(userId, sessionId);
+        if (session.isPresent()) {
+            chatSessionRepository.delete(session.get());
+            SessionHistory.removeHistory(userId, sessionId);
+            return ResponseEntity.ok("session deleted successfully");
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
     public ResponseEntity<?> loadSessions(String userId) {
         List<ChatSessionDto> chatSessionDtoList = chatSessionRepository
                 .findByUserIdOrderByCreatedDateDesc(userId)
                 .stream()
                 .map(session -> new ChatSessionDto(
                         session.getSessionId(),
-                        session.getCreatedDate()
+                        session.getCreatedDate(),
+                        session.getTitle()
                 ))
                 .toList();
         return ResponseEntity.ok(chatSessionDtoList);

@@ -20,6 +20,11 @@ public class SecurityConfig {
 
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .requestCache(ServerHttpSecurity.RequestCacheSpec::disable)
+                .headers(headers -> headers
+                        .frameOptions(ServerHttpSecurity.HeaderSpec.FrameOptionsSpec::disable)
+                        .cache(ServerHttpSecurity.HeaderSpec.CacheSpec::disable)
+                )
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers("/login.html",
                                 "register.html",

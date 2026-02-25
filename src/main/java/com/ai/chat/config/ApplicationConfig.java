@@ -2,6 +2,7 @@ package com.ai.chat.config;
 
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
@@ -19,6 +20,7 @@ public class ApplicationConfig {
     @Bean
     public WebClient webClientConfig() {
         ConnectionProvider provider = ConnectionProvider.builder("custom")
+                .maxConnections(500)
                 .maxIdleTime(Duration.ofSeconds(20))
                 .maxLifeTime(Duration.ofMinutes(5))
                 .pendingAcquireTimeout(Duration.ofSeconds(60))
@@ -28,11 +30,15 @@ public class ApplicationConfig {
 
         HttpClient httpClient = HttpClient.create(provider)
                 .responseTimeout(Duration.ofSeconds(120))
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 30000)
                 .doOnConnected(conn ->
-                        conn.addHandlerLast(new ReadTimeoutHandler(60)));
+                        conn.addHandlerLast(new ReadTimeoutHandler(60))
+                                .addHandlerLast(new WriteTimeoutHandler(60)));
 
         return WebClient.builder()
+                .codecs(configurer -> configurer
+                        .defaultCodecs()
+                        .maxInMemorySize(16 * 1024 * 1024))
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build();

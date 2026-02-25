@@ -22,7 +22,7 @@ public class SessionHistory {
     private static final Map<String, Deque<ObjectNode>> STORE =
             new ConcurrentHashMap<>();
 
-    private static final int MAX_MESSAGES = 20;
+    private static final int MAX_MESSAGES = 12;
     private static final ObjectMapper mapper = new ObjectMapper();
 
     public SessionHistory(ChatSessionRepository chatSessionRepository) {

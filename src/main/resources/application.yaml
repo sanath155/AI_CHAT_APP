@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/AI_CHAT_DB
     username: postgres
-    password: sanathkumar
+    password:
 
   jpa:
     hibernate:
@@ -17,12 +17,12 @@ spring:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
 
 gemini:
-  api-key: AIzaSyCyz3hUErOnef4U9_LGBZr3fsJUjIfzQsM
+  api-key:
   model: gemini-2.5-flash-lite
   base-url: https://generativelanguage.googleapis.com/v1beta/models
 
 groq:
-  api-key: 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
+  api-key:
   base-url: https://api.groq.com/openai/v1
   model: llama-3.1-8b-instant
 

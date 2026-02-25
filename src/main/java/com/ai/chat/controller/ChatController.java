@@ -1,6 +1,7 @@
 package com.ai.chat.controller;
 
 import com.ai.chat.dto.UserContext;
+import com.ai.chat.dto.UserPromptDto;
 import com.ai.chat.service.ChatService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -18,17 +19,12 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
-    @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> stream(@RequestParam String provider,
-                               @RequestParam String message,
-                               @RequestParam(required = false) Long sessionId) {
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> stream(@RequestBody UserPromptDto userPromptDto) {
 
-
-       /* return SecurityUtils.getAuthenticatedUser()
-                .flatMapMany(user -> chatService.streamChat(provider, message, user, sessionId));*/
         return Flux.deferContextual(ctx -> {
             UserContext user = ctx.get("USER_DATA");
-            return chatService.streamChat(provider, message, user, sessionId);
+            return chatService.streamChat(userPromptDto.getProvider(), userPromptDto.getPrompt(), user, userPromptDto.getSessionId());
         });
     }
 

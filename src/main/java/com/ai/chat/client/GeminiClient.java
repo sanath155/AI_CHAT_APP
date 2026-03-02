@@ -3,6 +3,7 @@ package com.ai.chat.client;
 import com.ai.chat.cache.SessionHistory;
 import com.ai.chat.config.GeminiProperties;
 import com.ai.chat.constants.ApplicationConstants;
+import com.ai.chat.dto.ChatSessionDto;
 import com.ai.chat.dto.GeminiGenerationConfigDto;
 import com.ai.chat.dto.GeminiRequestDto;
 import com.ai.chat.dto.UserContext;
@@ -17,130 +18,139 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 import reactor.core.scheduler.Schedulers;
-import reactor.util.retry.Retry;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Duration;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+
+import static reactor.netty.http.HttpConnectionLiveness.log;
 
 @Component
 public class GeminiClient implements LLMClient {
 
     private final WebClient webClient;
     private final GeminiProperties geminiProperties;
+    private final ObjectMapper objectMapper;
 
     @Autowired
     ChatMessageRepository chatMessageRepository;
-
     @Autowired
     ChatSessionRepository chatSessionRepository;
+    @Autowired
+    SessionHistory sessionHistory;
 
-    private final ObjectMapper mapper = new ObjectMapper();
-
-    public GeminiClient(GeminiProperties geminiProperties, WebClient webClient) {
+    public GeminiClient(GeminiProperties geminiProperties, WebClient webClient, ObjectMapper objectMapper) {
         this.geminiProperties = geminiProperties;
         this.webClient = webClient;
+        this.objectMapper = objectMapper;
     }
 
-
     @Override
-    public Flux<String> stream(String prompt, UserContext userContext, ChatSession chatSession) {
-
-        String user = userContext.getUserId();
-        Long sessionId = chatSession.getSessionId();
-        SessionHistory.addMessage(user, sessionId, "user", prompt);
+    public Flux<String> stream(String prompt, UserContext userContext, Long sessionId) {
+        String userId = userContext.getUserId();
         StringBuilder aiBuffer = new StringBuilder();
 
-        String url = UriComponentsBuilder.fromUriString(geminiProperties.getBaseUrl())
-                .pathSegment(geminiProperties.getModel(), ":generateContent")
-                .queryParam("alt", "sse")
-                .toUriString();
+        return buildRequest(userId, sessionId, userContext.getUserName(), prompt)
+                .flatMapMany(requestBody -> {
+                    String url = UriComponentsBuilder.fromUriString(geminiProperties.getBaseUrl())
+                            .pathSegment(geminiProperties.getModel() + ":generateContent")
+                            .queryParam("alt", "sse")
+                            .toUriString();
 
-        return webClient.post()
-                .uri(url)
-                .headers(httpHeaders -> {
-                    httpHeaders.setContentType(MediaType.APPLICATION_JSON);
-                    httpHeaders.setAccept(List.of(MediaType.TEXT_EVENT_STREAM));
-                    httpHeaders.set("x-goog-api-key", geminiProperties.getApiKey());
+                    return webClient.post()
+                            .uri(url)
+                            .headers(h -> {
+                                h.setContentType(MediaType.APPLICATION_JSON);
+                                h.setAccept(List.of(MediaType.TEXT_EVENT_STREAM));
+                                h.set("x-goog-api-key", geminiProperties.getApiKey());
+                            })
+                            .bodyValue(requestBody)
+                            .retrieve()
+                            .bodyToFlux(String.class);
                 })
-                .bodyValue(buildRequest(SessionHistory.getHistory(user, sessionId), userContext.getUserName()))
-                .retrieve()
-                .bodyToFlux(String.class)
-                .checkpoint("AI_STREAM_START")
-                .retryWhen(Retry.backoff(3, Duration.ofSeconds(2))
-                        .filter(throwable -> throwable instanceof WebClientRequestException))
-                .doOnError(e -> System.err.println("Stream failed after retries: " + e.getMessage()))
                 .flatMap(chunk -> {
-                    if (chunk.contains("[DONE]")) return Flux.just("{\"done\":true}");
-                    try {
-                        int start = chunk.indexOf("{");
-                        if (start == -1) return Flux.empty();
+                    String json = chunk.startsWith("data:") ? chunk.substring(5).trim() : chunk;
+                    if (json.isEmpty() || json.contains("[DONE]")) return Flux.empty();
 
-                        JsonNode root = mapper.readTree(chunk.substring(start));
+                    try {
+                        JsonNode root = objectMapper.readTree(json);
                         String content = root.path("candidates").get(0)
-                                .at("/content/parts").get(0)
-                                .path("text").asString(""); // Use .asText()
+                                .path("content").path("parts").get(0)
+                                .path("text").asString("");
 
                         if (content.isEmpty()) return Flux.empty();
-
                         aiBuffer.append(content);
 
-                        String[] words = content.split("(?<= )");
-
-                        return Flux.fromArray(words).map(word -> {
-                            ObjectNode response = mapper.createObjectNode();
+                        return Flux.fromArray(content.split("(?<= )")).map(word -> {
+                            ObjectNode response = objectMapper.createObjectNode();
                             response.put("content", word);
+                            response.put("sessionId", sessionId);
                             return response.toString();
                         });
                     } catch (Exception e) {
                         return Flux.empty();
                     }
                 })
-                .delayElements(Duration.ofMillis(30))
+                .delayElements(Duration.ofMillis(20))
                 .doFinally(signalType -> {
-                    SessionHistory.addMessage(user, sessionId, "assistant", aiBuffer.toString());
-
-                    ChatMessage userPrompt = ChatMessage.builder().
-                            role("user")
-                            .content(prompt)
-                            .session(chatSession)
-                            .build();
-
-                    ChatMessage aiMsg = ChatMessage.builder()
-                            .role("assistant")
-                            .content(aiBuffer.toString())
-                            .session(chatSession)
-                            .build();
-
-                    Mono.fromCallable(() -> chatMessageRepository.saveAll(List.of(userPrompt, aiMsg)))
-                            .subscribeOn(Schedulers.boundedElastic())
-                            .subscribe();
-
-                    if (chatSession.getTitle() == null || chatSession.getTitle().isBlank()) {
-                        generateTitle(prompt, chatSession);
+                    if (signalType == SignalType.ON_COMPLETE) {
+                        handlePostStreamActions(userId, sessionId, prompt, aiBuffer.toString());
                     }
                 });
+    }
 
+    private void handlePostStreamActions(String userId, Long sessionId, String prompt, String aiResponse) {
+        if (aiResponse == null || aiResponse.isBlank()) return;
+
+        ChatSession sessionProxy = chatSessionRepository.getReferenceById(sessionId);
+        ChatMessage userMsg = ChatMessage.builder().role("user").content(prompt).session(sessionProxy).build();
+        ChatMessage aiMsg = ChatMessage.builder().role("assistant").content(aiResponse).session(sessionProxy).build();
+
+        // Optimization: Parallel DB and Redis execution
+        Mono<List<ChatMessage>> dbMono = Mono.fromCallable(() -> chatMessageRepository.saveAll(List.of(userMsg, aiMsg)))
+                .subscribeOn(Schedulers.boundedElastic());
+
+        Mono<Long> redisUser = sessionHistory.addMessageInCache(userId, sessionId, "user", prompt);
+        Mono<Long> redisAi = sessionHistory.addMessageInCache(userId, sessionId, "assistant", aiResponse);
+
+        Mono.when(dbMono, redisUser, redisAi)
+                .then(sessionHistory.getSession(userId, String.valueOf(sessionId))
+                        .switchIfEmpty(Mono.fromCallable(() -> chatSessionRepository.findById(sessionId))
+                                .subscribeOn(Schedulers.boundedElastic())
+                                .flatMap(opt -> opt.map(Mono::just).orElseGet(Mono::empty))
+                                .map(chatSession -> new ChatSessionDto(
+                                        chatSession.getSessionId(),
+                                        chatSession.getCreatedDate(),
+                                        chatSession.getTitle()))
+                        )
+                )
+                .flatMap(dto -> {
+                    if (dto.getTitle() == null || dto.getTitle().isBlank() || dto.getTitle().equals("New Chat")) {
+                        return generateTitle(userId, prompt, dto);
+                    } else {
+                        return sessionHistory.updateOrAddSession(userId, dto).thenReturn(dto);
+                    }
+                })
+                .subscribe();
     }
 
     @Override
-    public void generateTitle(String prompt, ChatSession session) {
+    public Mono<ChatSessionDto> generateTitle(String userId, String prompt, ChatSessionDto dto) {
         String summarizationPrompt = "Generate a concise 3-word title for: '" + prompt + "'";
-
         String url = UriComponentsBuilder.fromUriString(geminiProperties.getBaseUrl())
                 .pathSegment(geminiProperties.getModel(), ":generateContent")
                 .toUriString();
 
-        webClient.post()
+        return webClient.post()
                 .uri(url)
                 .headers(httpHeaders -> {
                     httpHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -152,16 +162,16 @@ public class GeminiClient implements LLMClient {
                 .map(this::extractText)
                 .map(title -> title.replaceAll("\"", "").trim())
                 .flatMap(cleanTitle -> {
-                    String safeTitle = cleanTitle.length() > 60
-                            ? cleanTitle.substring(0, 60) + "..."
-                            : cleanTitle;
-                    session.setTitle(safeTitle);
-                    return Mono.fromCallable(() -> chatSessionRepository.save(session))
-                            .subscribeOn(Schedulers.boundedElastic());
+                    String safeTitle = cleanTitle.length() > 60 ? cleanTitle.substring(0, 60) + "..." : cleanTitle;
+                    dto.setTitle(safeTitle);
+
+                    // Parallelize updates
+                    return Mono.when(
+                            Mono.fromRunnable(() -> chatSessionRepository.updateTitle(dto.getSessionId(), safeTitle)).subscribeOn(Schedulers.boundedElastic()),
+                            sessionHistory.updateOrAddSession(userId, dto)
+                    ).thenReturn(dto);
                 })
-                .subscribeOn(Schedulers.boundedElastic())
-                .doOnError(e -> System.err.println("Title generation failed: " + e.getMessage()))
-                .subscribe();
+                .doOnError(e -> log.error("Title generation failed for session {}: {}", dto.getSessionId(), e.getMessage()));
     }
 
     @Override
@@ -169,58 +179,32 @@ public class GeminiClient implements LLMClient {
         return "gemini";
     }
 
-    private GeminiRequestDto buildRequest(Deque<ObjectNode> history, String username) {
+    private Mono<GeminiRequestDto> buildRequest(String userId, Long sessionId, String username, String prompt) {
+        return sessionHistory.getLastLimitChat(userId, sessionId)
+                .map(history -> {
+                    String userSystem = ApplicationConstants.SYSTEM_PROMPT + String.format(" - User name is %s", username);
+                    List<GeminiMessagesRecord> records = history.stream()
+                            .map(msg -> GeminiMessagesRecord.builder()
+                                    .role(msg.getRole().equals("assistant") ? "model" : "user")
+                                    .parts(List.of(GeminiTextRecord.builder().text(msg.getContent()).build()))
+                                    .build())
+                            .collect(Collectors.toList());
 
-        String userSystem = ApplicationConstants.SYSTEM_PROMPT + String.format(" - User name is %s", username);
+                    records.add(GeminiMessagesRecord.builder().role("user").parts(List.of(GeminiTextRecord.builder().text(prompt).build())).build());
 
-        List<GeminiMessagesRecord> geminiMessagesRecords = history
-                .stream()
-                .map(msg -> {
-                    // Safely extract the exact text without Jackson adding extra quotes
-                    String originalRole = msg.path("role").asString("user");
-                    String content = msg.path("content").asString("");
-
-                    // Map to Gemini's strict roles
-                    String geminiRole = originalRole.equals("assistant") ? "model" : "user";
-
-                    return GeminiMessagesRecord.builder()
-                            .role(geminiRole)
-                            .parts(List.of(
-                                    GeminiTextRecord.builder()
-                                            .text(content)
-                                            .build()
-                            )).build();
-                }).toList();
-
-        return GeminiRequestDto.builder()
-                .systemInstruction(GeminiPartsRecord.builder()
-                        .parts(List.of(GeminiTextRecord.builder()
-                                .text(userSystem).build())
-                        ).build())
-                .contents(geminiMessagesRecords)
-                .build();
+                    return GeminiRequestDto.builder()
+                            .systemInstruction(GeminiPartsRecord.builder().parts(List.of(GeminiTextRecord.builder().text(userSystem).build())).build())
+                            .contents(records)
+                            .build();
+                });
     }
 
     private GeminiRequestDto buildTitleRequest(String prompt) {
-
-        String instruction = "Summarize this into a 3-word title: " + prompt +
-                " Plain text ONLY.  Strictly NO markdown, NO bolding, NO quotes, and NO periods.";
-
+        String instruction = "Summarize this into a 3-word title: " + prompt + " Plain text ONLY. Strictly NO markdown, NO bolding, NO quotes, and NO periods.";
         return GeminiRequestDto.builder()
-                .contents(
-                        List.of(GeminiMessagesRecord.builder()
-                                .role("user")
-                                .parts(
-                                        List.of(GeminiTextRecord.builder()
-                                                .text(instruction)
-                                                .build()))
-                                .build()))
-                .generationConfig(
-                        GeminiGenerationConfigDto.builder()
-                                .maxOutputTokens(20)
-                                .temperature(1.0)
-                                .build()
-                ).build();
+                .contents(List.of(GeminiMessagesRecord.builder().role("user").parts(List.of(GeminiTextRecord.builder().text(instruction).build())).build()))
+                .generationConfig(GeminiGenerationConfigDto.builder().maxOutputTokens(20).temperature(1.0).build())
+                .build();
     }
 
     private String extractText(Map response) {

@@ -1,5 +1,6 @@
 package com.ai.chat.config;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
@@ -11,6 +12,9 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 
@@ -41,6 +45,17 @@ public class ApplicationConfig {
                         .maxInMemorySize(16 * 1024 * 1024))
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .build();
+    }
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return JsonMapper.builder()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .changeDefaultPropertyInclusion(include ->
+                        include.withContentInclusion(JsonInclude.Include.NON_NULL)
+                                .withValueInclusion(JsonInclude.Include.NON_NULL))
+                .findAndAddModules()
                 .build();
     }
 }

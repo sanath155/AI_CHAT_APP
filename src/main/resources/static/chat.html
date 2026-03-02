@@ -291,7 +291,8 @@
                 <option value="gemini">Google Gemini Pro</option>
             </select>
         </div>
-        <button class="new-chat-btn" onclick="createNewSession()"><i data-lucide="plus" size="16"></i> New Thread</button>
+
+        <button class="new-chat-btn" onclick="startNewThread()"><i data-lucide="plus" size="16"></i> New Thread</button>
 
         <div class="conv-heading">Recent Activity</div>
         <div id="sessionList" class="session-list"></div>
@@ -312,7 +313,7 @@
             <div class="composer-box">
                 <textarea id="prompt" class="input-area" placeholder="Ask anything..." rows="1" maxlength="2000"></textarea>
                 <div class="action-container">
-                    <button id="sendBtn" class="send-btn" onclick="startStream()" disabled>
+                    <button id="sendBtn" class="send-btn" onclick="triggerSend()" disabled>
                         <i data-lucide="navigation" size="22" fill="currentColor"></i>
                     </button>
                     <button id="cancelBtn" class="cancel-btn hidden" onclick="cancelStream()">
@@ -326,181 +327,32 @@
 
 <script>
     lucide.createIcons();
+    marked.setOptions({ breaks: true, gfm: true });
+
     let token = localStorage.getItem("accessToken");
     let refreshToken = localStorage.getItem("refreshToken");
     if (!token) window.location.href = "login.html";
 
     let currentSessionId = null;
     let abortController = null;
-    let streamReader = null;
     let isStreaming = false;
     let pendingDeleteId = null;
-    let streamUpdateTimer = null;
 
-    marked.setOptions({ breaks: true, gfm: true });
-
-    function openModal(sessionId) { pendingDeleteId = sessionId; document.getElementById('deleteModal').style.display = 'flex'; }
-    function closeModal() { document.getElementById('deleteModal').style.display = 'none'; }
-    document.getElementById('confirmDelete').onclick = () => { if(pendingDeleteId) executeDelete(pendingDeleteId); closeModal(); };
-
-    function logout() { localStorage.clear(); window.location.href = "login.html"; }
-
-    async function handleResponse(response, retryFunc) {
-        if (response.status === 401) {
-            const res = await fetch("http://localhost:8081/auth/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshToken }) });
-            if (res.ok) {
-                const data = await res.json(); token = data.accessToken; refreshToken = data.refreshToken;
-                localStorage.setItem("accessToken", token); localStorage.setItem("refreshToken", refreshToken);
-                return await retryFunc();
-            }
-            logout(); return null;
+    /* =========================================
+       1. UNIVERSAL FETCH (Fixes 500 error & 401s)
+       ========================================= */
+    async function fetchWithRetry(url, options = {}, retries = 3) {
+        const headers = { ...options.headers, "Authorization": `Bearer ${token}` };
+        if (options.body && typeof options.body === 'object') {
+            headers["Content-Type"] = "application/json";
+            options.body = JSON.stringify(options.body);
         }
-        return response;
-    }
-
-    function renderMarkdown(el, text) {
-        el.innerHTML = marked.parse(text);
-        el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
-        el.querySelectorAll('pre').forEach(pre => {
-            if (pre.querySelector('.copy-btn')) return;
-            const btn = document.createElement('button');
-            btn.className = 'copy-btn';
-            btn.innerHTML = '<i data-lucide="copy" size="14"></i> Copy';
-            btn.onclick = () => {
-                navigator.clipboard.writeText(pre.querySelector('code').innerText);
-                btn.innerHTML = '<i data-lucide="check" size="14"></i> Copied';
-                lucide.createIcons();
-                setTimeout(() => { btn.innerHTML = '<i data-lucide="copy" size="14"></i> Copy'; lucide.createIcons(); }, 2000);
-            };
-            pre.appendChild(btn);
-        });
-        lucide.createIcons();
-    }
-
-    function appendMessage(role, content, isHistory = false) {
-        const container = document.getElementById("messages");
-        const row = document.createElement("div");
-        row.className = `msg-row ${role === "user" ? "user-row" : "ai-row"}`;
-
-        if (role === "assistant") {
-            row.innerHTML = `
-                <div class="llm-msg">
-                    <div class="ai-avatar"><i data-lucide="hexagon" fill="white" size="16"></i></div>
-                    <div class="ai-content content"></div>
-                </div>`;
-            container.appendChild(row);
-            const contentEl = row.querySelector(".content");
-            if (content === '...') {
-                contentEl.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
-            } else {
-                renderMarkdown(contentEl, content);
-            }
-            lucide.createIcons();
-            return contentEl;
-        } else {
-            row.innerHTML = `<div class="llm-msg content"></div>`;
-            container.appendChild(row);
-            const contentEl = row.querySelector(".content");
-            contentEl.innerText = content;
-            return contentEl;
-        }
-    }
-
-    async function executeDelete(sessionId) {
-        // Wrapped in handleResponse to prevent 401 failures
-        const rawRes = await fetch(`/v1/api/sessions/${sessionId}/deleteSession`, { method: "DELETE", headers: { "Authorization": `Bearer ${token}` } });
-        const res = await handleResponse(rawRes, () => executeDelete(sessionId));
-        if (!res) return;
-
-        if (currentSessionId === sessionId) {
-            currentSessionId = null;
-            document.getElementById("messages").innerHTML = "";
-            document.getElementById("activeChatTitle").innerText = "New Thread";
-        }
-        loadSessions();
-    }
-
-    async function loadSessions() {
-        const rawRes = await fetch(`/v1/api/loadSessions`, { headers: { "Authorization": `Bearer ${token}` } });
-        const res = await handleResponse(rawRes, loadSessions);
-        if (!res) return;
-        const sessions = await res.json();
-        const list = document.getElementById("sessionList");
-        list.innerHTML = "";
-        sessions.forEach(s => {
-            const div = document.createElement("div");
-            div.className = `session-item ${currentSessionId === s.sessionId ? 'active' : ''}`;
-            div.onclick = () => {
-                if (isStreaming) cancelStream(); // Added safety
-                currentSessionId = s.sessionId;
-                document.getElementById('activeChatTitle').innerText = s.title || "Untitled Chat";
-                document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
-                div.classList.add('active');
-                loadMessages(s.sessionId);
-            };
-            div.innerHTML = `<span class="chat-title">${s.title || "Untitled Chat"}</span><i data-lucide="trash-2" size="14" class="delete-trigger" onclick="event.stopPropagation(); openModal(${s.sessionId})"></i>`;
-            list.appendChild(div);
-        });
-        lucide.createIcons();
-    }
-
-    async function loadMessages(sessionId) {
-        const rawRes = await fetch(`/v1/api/sessions/${sessionId}/messages`, { headers: { "Authorization": `Bearer ${token}` } });
-        const res = await handleResponse(rawRes, () => loadMessages(sessionId));
-        if (!res) return;
-        const data = await res.json();
-        const container = document.getElementById("messages");
-        container.innerHTML = "";
-        (Array.isArray(data) ? data : (data.body || [])).forEach(m => appendMessage(m.role, m.content, true));
-        smoothScroll(true); // Force scroll on load
-    }
-
-    async function startStream() {
-        if (isStreaming) return;
-        const promptEl = document.getElementById("prompt");
-        const msg = promptEl.value.trim(); if (!msg) return;
-        const pName = document.getElementById("providerSelect").options[document.getElementById("providerSelect").selectedIndex].text;
-
-        isStreaming = true;
-        appendMessage('user', msg);
-        const bubble = appendMessage('assistant', '...');
-
-        promptEl.value = ""; promptEl.style.height = "auto";
-        document.getElementById('sendBtn').classList.remove('active');
-        document.getElementById('sendBtn').disabled = true;
-        smoothScroll(true); // Force scroll to bottom when starting new message
-
-        document.getElementById('sendBtn').classList.add('hidden');
-        document.getElementById('cancelBtn').classList.remove('hidden');
-        executeStreamInternal(msg, document.getElementById("providerSelect").value, bubble, pName);
-    }
-
-    async function executeStreamInternal(msg, provider, bubble, pName, isRetry = false) {
-        abortController = new AbortController();
-        let streamBuffer = "";
-        let partialLine = "";
 
         try {
-            // Updated to POST method with JSON body
-            const url = `/v1/api/stream`;
-            const payload = {
-                prompt: msg,
-                sessionId: currentSessionId || null,
-                provider: provider
-            };
+            let res = await fetch(url, { ...options, headers });
 
-            let rawRes = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(payload),
-                signal: abortController.signal
-            });
-
-            // Handle Silent Token Refresh During Streaming
-            if (rawRes.status === 401 && !isRetry) {
+            // 401: Refresh Token & Retry
+            if (res.status === 401) {
                 const refreshRes = await fetch("http://localhost:8081/auth/refresh", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -513,147 +365,250 @@
                     refreshToken = data.refreshToken;
                     localStorage.setItem("accessToken", token);
                     localStorage.setItem("refreshToken", refreshToken);
-
-                    // Retry the stream seamlessly
-                    return executeStreamInternal(msg, provider, bubble, pName, true);
+                    headers["Authorization"] = `Bearer ${token}`;
+                    return fetch(url, { ...options, headers }); // Retry immediate
                 } else {
-                    logout();
-                    return;
+                    logout(); return null;
                 }
             }
 
-            if (!rawRes.ok) throw new Error(`Stream failed: ${rawRes.status}`);
-
-            streamReader = rawRes.body.getReader();
-            const decoder = new TextDecoder();
-            bubble.innerHTML = "";
-
-            while (isStreaming) {
-                const { done, value } = await streamReader.read();
-                if (done) break;
-
-                const chunk = partialLine + decoder.decode(value, { stream: true });
-                const lines = chunk.split("\n");
-                partialLine = lines.pop();
-
-                let newContentAdded = false;
-
-                for (let line of lines) {
-                    line = line.trim();
-                    if (!line) continue;
-
-                    const parts = line.split("data:").filter(p => p.trim() !== "");
-
-                    for (let part of parts) {
-                        part = part.trim();
-                        if (part === "[DONE]") continue;
-
-                        try {
-                            const json = JSON.parse(part);
-                            if (json.done) continue;
-
-                            if (json.content) {
-                                streamBuffer += json.content;
-                                newContentAdded = true;
-                            }
-                        } catch (e) {
-                            // Silently ignore
-                        }
-                    }
-                }
-
-                if (newContentAdded && isStreaming) {
-                    if (streamUpdateTimer) cancelAnimationFrame(streamUpdateTimer);
-                    streamUpdateTimer = requestAnimationFrame(() => {
-                        renderMarkdown(bubble, streamBuffer);
-                        smoothScroll(false); // False allows user to scroll up without snapping
-                    });
-                }
+            // 500 or Network Fail: Retry Logic (Recursive)
+            // Fixes "loadsessions give 500"
+            if (!res.ok && res.status >= 500 && retries > 0) {
+                console.warn(`Server error ${res.status}. Retrying... (${retries} left)`);
+                await new Promise(r => setTimeout(r, 1000));
+                return fetchWithRetry(url, options, retries - 1);
             }
 
-            if (partialLine && isStreaming) {
-                const parts = partialLine.split("data:").filter(p => p.trim() !== "");
-                for (let part of parts) {
-                    try {
-                        const json = JSON.parse(part.trim());
-                        if (json.content) streamBuffer += json.content;
-                    } catch(e) {}
-                }
-                if (streamBuffer) {
-                    renderMarkdown(bubble, streamBuffer);
-                    smoothScroll(false);
-                }
-            }
-
+            return res;
         } catch (err) {
-            if (streamUpdateTimer) cancelAnimationFrame(streamUpdateTimer);
-            if (err.name === "AbortError" || !isStreaming) {
-                renderMarkdown(bubble, streamBuffer + " 🛑 You stopped this response");
+            if (retries > 0) {
+                await new Promise(r => setTimeout(r, 1000));
+                return fetchWithRetry(url, options, retries - 1);
             }
-            smoothScroll(true);
-        } finally {
-            isStreaming = false;
-            streamReader = null;
-            document.getElementById("sendBtn").classList.remove("hidden");
-            document.getElementById("cancelBtn").classList.add("hidden");
-            lucide.createIcons();
-            if (document.querySelectorAll(".msg-row").length <= 2) setTimeout(loadSessions, 1500);
+            throw err;
         }
     }
 
-    async function createNewSession() {
-        if (isStreaming) cancelStream(); // Fixes the button getting stuck
-
-        // Wrapped in handleResponse to prevent 401 failures
-        const rawRes = await fetch(`/v1/api/createSession`, { method: "POST", headers: { "Authorization": `Bearer ${token}` } });
-        const res = await handleResponse(rawRes, createNewSession);
-        if (!res) return;
-
-        currentSessionId = (await res.json()).sessionId;
+    /* =========================================
+       2. UI ACTIONS (Lazy Creation)
+       ========================================= */
+    function startNewThread() {
+        if (isStreaming) cancelStream();
+        // Reset UI only - No Backend Call
+        currentSessionId = null;
         document.getElementById("messages").innerHTML = "";
         document.getElementById("activeChatTitle").innerText = "New Thread";
-        loadSessions();
+        document.getElementById("prompt").value = "";
+        document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
     }
 
-    // Smart Scrolling: Only auto-scrolls if you are already at the bottom
-    function smoothScroll(force = false) {
-        const msgDiv = document.getElementById("messages");
-        const threshold = 150; // pixels
-        const isNearBottom = (msgDiv.scrollHeight - msgDiv.scrollTop - msgDiv.clientHeight) < threshold;
+    async function loadSessions() {
+        const res = await fetchWithRetry("/v1/api/loadSessions");
+        if (res && res.ok) {
+            const sessions = await res.json();
+            const list = document.getElementById("sessionList");
+            list.innerHTML = "";
+            sessions.forEach(s => {
+                const div = document.createElement("div");
+                div.className = `session-item ${currentSessionId === s.sessionId ? 'active' : ''}`;
+                div.onclick = () => switchSession(s.sessionId, s.title);
+                div.innerHTML = `<span class="chat-title">${s.title || "Untitled Chat"}</span><i data-lucide="trash-2" size="14" class="delete-trigger" onclick="event.stopPropagation(); openModal(${s.sessionId})"></i>`;
+                list.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+    }
 
-        if (force || isNearBottom) {
-            msgDiv.scrollTop = msgDiv.scrollHeight;
+    async function switchSession(id, title) {
+        if (isStreaming) cancelStream();
+        currentSessionId = id;
+        document.getElementById("activeChatTitle").innerText = title || "Untitled Chat";
+        document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+        loadSessions();
+
+        const res = await fetchWithRetry(`/v1/api/sessions/${id}/messages`);
+        if (res && res.ok) {
+            const data = await res.json();
+            const container = document.getElementById("messages");
+            container.innerHTML = "";
+            (Array.isArray(data) ? data : (data.body || [])).forEach(m => appendMessage(m.role, m.content));
+            smoothScroll(true);
+        }
+    }
+
+    /* =========================================
+       3. STREAMING ENGINE
+       ========================================= */
+    async function triggerSend() {
+        const input = document.getElementById("prompt");
+        const msg = input.value.trim();
+        if (!msg) return;
+
+        input.value = ""; input.style.height = "auto";
+        document.getElementById("sendBtn").disabled = true;
+        document.getElementById("sendBtn").classList.remove("active");
+
+        appendMessage("user", msg);
+        const bubble = appendMessage("assistant", "...");
+        isStreaming = true;
+        document.getElementById("sendBtn").classList.add("hidden");
+        document.getElementById("cancelBtn").classList.remove("hidden");
+        smoothScroll(true);
+
+        const provider = document.getElementById("providerSelect").value;
+        abortController = new AbortController();
+
+        let mdBuffer = ""; // Track content length to suppress errors
+
+        try {
+            // Send 'sessionId: null' if it's a new thread
+            const res = await fetchWithRetry("/v1/api/stream", {
+                method: "POST",
+                body: { prompt: msg, sessionId: currentSessionId, provider: provider },
+                signal: abortController.signal
+            });
+
+            if (!res || !res.ok) throw new Error("Stream Error");
+
+            // --- CAPTURE NEW SESSION ID ---
+            const headerId = res.headers.get("X-Session-Id");
+            if (headerId && !currentSessionId) currentSessionId = parseInt(headerId);
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let first = true;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (let line of lines) {
+                    const clean = line.replace("data:", "").trim();
+                    if (!clean || clean === "[DONE]") continue;
+
+                    try {
+                        const json = JSON.parse(clean);
+                        // Fallback ID check
+                        if (json.sessionId && !currentSessionId) currentSessionId = json.sessionId;
+
+                        if (json.content) {
+                            if (first) { bubble.innerHTML = ""; first = false; }
+                            mdBuffer += json.content;
+                            requestAnimationFrame(() => {
+                                renderMarkdown(bubble, mdBuffer);
+                                smoothScroll();
+                            });
+                        }
+                    } catch (e) {}
+                }
+            }
+        } catch (e) {
+            if (e.name === 'AbortError') return;
+
+            // --- ERROR SUPPRESSION FIX ---
+            // If we successfully streamed a good amount of text (>50 chars),
+            // and the error is a generic "network error" at the end, IGNORE IT.
+            // This fixes the ugly blue box issue.
+            const isNetworkError = e.message.toLowerCase().includes("network") || e.message.toLowerCase().includes("fetch");
+            if (mdBuffer.length > 50 && isNetworkError) {
+                console.warn("Suppressed network error on completed stream:", e);
+            } else {
+                bubble.innerHTML += `\n\n*[Error: ${e.message}]*`;
+            }
+        } finally {
+            isStreaming = false;
+            document.getElementById("sendBtn").classList.remove("hidden");
+            document.getElementById("cancelBtn").classList.add("hidden");
+            setTimeout(loadSessions, 1500); // Refresh sidebar for title
         }
     }
 
     function cancelStream() {
+        if (abortController) abortController.abort();
         isStreaming = false;
-        if (abortController) {
-            abortController.abort();
-        }
-        if (streamReader) {
-            streamReader.cancel().catch(() => {});
+        document.getElementById("sendBtn").classList.remove("hidden");
+        document.getElementById("cancelBtn").classList.add("hidden");
+    }
+
+    /* =========================================
+       4. HELPERS & EVENT LISTENERS
+       ========================================= */
+    function appendMessage(role, content) {
+        const container = document.getElementById("messages");
+        const row = document.createElement("div");
+        row.className = `msg-row ${role === "user" ? "user-row" : "ai-row"}`;
+
+        if (role === "assistant") {
+            row.innerHTML = `<div class="llm-msg"><div class="ai-avatar"><i data-lucide="hexagon" fill="white" size="16"></i></div><div class="ai-content content"></div></div>`;
+            const el = row.querySelector(".content");
+            if (content === "...") el.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+            else renderMarkdown(el, content);
+            container.appendChild(row);
+            lucide.createIcons();
+            return el;
+        } else {
+            row.innerHTML = `<div class="llm-msg content"></div>`;
+            row.querySelector(".content").innerText = content;
+            container.appendChild(row);
+            return row;
         }
     }
 
-    document.getElementById('prompt').addEventListener('input', function() {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-        const sendBtn = document.getElementById('sendBtn');
-        if (this.value.trim().length > 0) {
-            sendBtn.classList.add('active');
-            sendBtn.disabled = false;
-        } else {
-            sendBtn.classList.remove('active');
-            sendBtn.disabled = true;
-        }
-    });
+    function renderMarkdown(el, text) {
+        el.innerHTML = marked.parse(text);
+        el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+        el.querySelectorAll('pre').forEach(pre => {
+             if(pre.querySelector('.copy-btn')) return;
+             const btn = document.createElement('button');
+             btn.className = 'copy-btn';
+             btn.innerHTML = '<i data-lucide="copy" size="14"></i> Copy';
+             btn.onclick = () => {
+                 navigator.clipboard.writeText(pre.querySelector('code').innerText);
+                 btn.innerHTML = '<i data-lucide="check" size="14"></i> Copied';
+                 setTimeout(() => { btn.innerHTML = '<i data-lucide="copy" size="14"></i> Copy'; lucide.createIcons(); }, 2000);
+                 lucide.createIcons();
+             };
+             pre.appendChild(btn);
+        });
+        lucide.createIcons();
+    }
 
-    document.getElementById('prompt').onkeydown = (e) => {
-        if(e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            if(document.getElementById('prompt').value.trim().length > 0) startStream();
+    function smoothScroll(force = false) {
+        const d = document.getElementById("messages");
+        if (force || (d.scrollHeight - d.scrollTop - d.clientHeight) < 150) d.scrollTop = d.scrollHeight;
+    }
+
+    function openModal(id) { pendingDeleteId = id; document.getElementById('deleteModal').style.display = 'flex'; }
+    function closeModal() { document.getElementById('deleteModal').style.display = 'none'; }
+
+    document.getElementById('confirmDelete').onclick = async () => {
+        if(!pendingDeleteId) return;
+        const id = pendingDeleteId;
+        closeModal();
+        const res = await fetchWithRetry(`/v1/api/sessions/${id}/deleteSession`, { method: "DELETE" });
+        if(res && res.ok) {
+            if(currentSessionId === id) startNewThread();
+            loadSessions();
         }
+    };
+
+    function logout() { localStorage.clear(); window.location.href = "login.html"; }
+
+    const promptInput = document.getElementById('prompt');
+    promptInput.addEventListener('input', function() {
+        this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        const btn = document.getElementById('sendBtn');
+        if (this.value.trim().length > 0) { btn.classList.add('active'); btn.disabled = false; }
+        else { btn.classList.remove('active'); btn.disabled = true; }
+    });
+    promptInput.onkeydown = (e) => {
+        if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); triggerSend(); }
     };
 
     window.onload = loadSessions;

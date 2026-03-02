@@ -26,12 +26,17 @@ public class SecurityConfig {
                         .cache(ServerHttpSecurity.HeaderSpec.CacheSpec::disable)
                 )
                 .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers("/login.html",
-                                "register.html",
-                                "chat.html",
-                                "favicon.ico",
+                        .pathMatchers(
+                                "/login.html",
+                                "/register.html",
+                                "/chat.html",
+                                "/favicon.ico",
                                 "/css/**",
-                                "/js/**").permitAll()
+                                "/js/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html"
+                        ).permitAll()
                         .anyExchange().authenticated()
                 )
                 .oauth2ResourceServer(oauth -> oauth.jwt(
